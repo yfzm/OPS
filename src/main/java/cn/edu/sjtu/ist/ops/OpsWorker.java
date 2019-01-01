@@ -17,7 +17,6 @@
 package cn.edu.sjtu.ist.ops;
 
 import java.net.InetAddress;
-import java.net.UnknownHostException;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
@@ -34,19 +33,19 @@ import cn.edu.sjtu.ist.ops.util.OpsConfig;
 import cn.edu.sjtu.ist.ops.util.OpsUtils;
 import cn.edu.sjtu.ist.ops.util.WatcherThread;
 
-public class OpsMaster extends OpsNode {
+public class OpsWorker extends OpsNode {
 
-    private static final Logger logger = LoggerFactory.getLogger(OpsMaster.class);
-
-    private OpsScheduler scheduler;
+    private static final Logger logger = LoggerFactory.getLogger(OpsWorker.class);
     private HeartbeatThread heartbeat;
     private WatcherThread watcher;
+    private OpsShuffleHandler shuffleHandler;
+    private OpsTransferer[] transferers;
 
-    public OpsMaster(String ip) {
+    public OpsWorker(String ip) {
         super(ip);
 
         Gson gson = new Gson();
-        this.heartbeat = new HeartbeatThread(OpsUtils.ETCD_NODES_PATH + "/master/", gson.toJson(this));
+        this.heartbeat = new HeartbeatThread(OpsUtils.ETCD_NODES_PATH + "/worker/", gson.toJson(this));
         this.watcher = new WatcherThread(OpsUtils.ETCD_NODES_PATH + "/worker");
 
         ObjectMapper mapper = new ObjectMapper(new YAMLFactory());
@@ -56,41 +55,46 @@ public class OpsMaster extends OpsNode {
             OpsNode master = new OpsNode(opsConfig.getMasterHostName());
             OpsConf opsConf = new OpsConf(master, opsConfig.getOpsWorkerLocalDir(), opsConfig.getOpsMasterPortGRPC(),
                     opsConfig.getOpsWorkerPortGRPC(), opsConfig.getOpsWorkerPortHadoopGRPC());
-            this.scheduler = new OpsScheduler(opsConf, this.watcher);
+
+            shuffleHandler = new OpsShuffleHandler(opsConf, this);
+
+            transferers = new OpsTransferer[1];
+            for (int i = 0; i < transferers.length; i++) {
+                transferers[i] = new OpsTransferer(i, shuffleHandler, opsConf);
+            }
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
-    public void start() throws UnknownHostException {
+    public void start() {
         this.heartbeat.start();
         this.watcher.start();
 
-        logger.info("Master start");
-        this.scheduler.start();
-    }
+        logger.debug("Worker start");
+        this.shuffleHandler.start();
 
-    public void stop() {
-
+        for (OpsTransferer transferer : this.transferers) {
+            transferer.start();
+        }
     }
 
     private void blockUntilShutdown() throws InterruptedException {
-        this.scheduler.join();
+        this.shuffleHandler.join();
     }
 
     public static void main(String[] args) throws InterruptedException {
-        Thread.currentThread().setName("ops-master");
+        Thread.currentThread().setName("ops-worker");
         EtcdService.initClient();
 
         try {
             InetAddress addr = InetAddress.getLocalHost();
-            OpsMaster opsMaster = new OpsMaster(addr.getHostAddress());
-            opsMaster.start();
-            opsMaster.blockUntilShutdown();
+            OpsWorker opsWorker = new OpsWorker(addr.getHostAddress());
 
+            opsWorker.start();
+            opsWorker.blockUntilShutdown();
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
-
 }

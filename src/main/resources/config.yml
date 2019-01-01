@@ -1,0 +1,13 @@
+ops:
+  master:
+    hostname: "192.168.2.11"
+    port_grpc: 14010
+  worker:
+    localDir: "/root/tmp_OPS/"
+    port_grpc: 14020
+    port_hadoop_grpc: 14030
+
+etcd:
+  endpoints:
+    - hostname: "http://192.168.2.11"
+      port: 2379
